@@ -1,0 +1,1 @@
+This directory will be used to store temporary download data.

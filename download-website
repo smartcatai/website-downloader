@@ -1,0 +1,151 @@
+#!/usr/bin/env node
+
+const scrape = require('website-scraper');
+const PuppeteerPlugin = require('website-scraper-puppeteer');
+const fs = require('fs');
+var archiver = require('archiver');
+
+const { exit } = require('process');
+
+var rootUrl = process.argv.slice(2).shift();
+if (!rootUrl || rootUrl == '') {
+  console.log('Usage: download-website <website-URL>')
+  process.exit(1);
+}
+
+var prefix =
+  (new URL(rootUrl))
+  .toString()
+  .replace(/https?:\/\//, '')
+  .replace(/\?.*/, '')
+  .replace(/[\.\/]+/g, '-')
+  .replace(/^-/, '')
+  .replace(/-$/, '');
+
+var timestamp = (new Date()).toISOString().replace(/[:\.]/g, '-');
+var dirname = `${prefix}-${timestamp}`;
+var output_dir = `./tmp/${dirname}`;
+
+//var downloadWithMedia = true;
+var downloadWithMedia = false;
+
+try {
+  if (!fs.existsSync(output_dir)) {
+      // do nothing, as the directory will be created automatically by the scraper 
+      console.log(`Using directory ${output_dir}`);
+  } else {
+      console.log(`Directory ${output_dir} already exists.`);
+      process.exit(2);
+  }
+} catch (err) {
+  console.log(err);
+  process.exit(2);
+}
+
+var urlHistory = {};
+var counter = 0;
+
+scrape({
+    urls: [rootUrl],
+    urlFilter: function(url) {
+      // get rid of the hash
+      if (url.indexOf('#') >= 0) {
+        url = url.substr(0, url.indexOf('#'))
+      }
+
+      // get rid of the query parameters
+      if (url.indexOf('?') >= 0) {
+        url = url.substr(0, url.indexOf('?'))
+      }
+
+      if (urlHistory[url]) {
+        return false;
+      }
+      urlHistory[url] = true;
+
+      let isDownloadableContent = (
+         url.endsWith('.html')
+      || url.endsWith('.htm')
+      || url.endsWith('.asp')
+      || url.endsWith('.aspx')
+      );
+
+      if (url.endsWith('/') || isDownloadableContent || url.match(/\/[^\.\/]+$/)) {
+        if (url.indexOf(rootUrl) !== 0) {
+          console.log('SKIP EXTERNAL:', url);
+          return false;
+        }
+
+        counter++;
+        console.log(`[${counter}] ${url}`);
+        return true;
+      }
+
+      if (downloadWithMedia) {
+        if (
+             url.endsWith('.css')
+          || url.endsWith('.gif')
+          || url.endsWith('.ico')
+          || url.endsWith('.jpg')
+          || url.endsWith('.jpeg')
+          || url.endsWith('.js')
+          || url.endsWith('.png')
+          || url.endsWith('.svg')
+          || url.endsWith('.ttf')
+          || url.endsWith('.woff')
+          || url.endsWith('.woff2')
+        ) {
+          console.log('MEDIA:', url);
+          return true;
+        }
+      }
+
+      console.log('SKIP:', url);
+      return false;
+    },
+    directory: output_dir,
+    filenameGenerator: 'bySiteStructure',
+    recursive: true,
+    maxRecursiveDepth: 10,
+    requestConcurrency: 6,
+    /// Disable GZIP for compatibility with certain web sites
+    request: {
+      headers: {
+        'Accept-Encoding': 'identity' // request plaintext
+      }
+    },
+    /// End of GZIP disabling hack
+    plugins: [ 
+      new PuppeteerPlugin({
+        launchOptions: { headless: true },
+      })
+    ]
+}).then((result) => {
+  console.log('Scraping finished');
+  zipArchive();
+});
+
+function zipArchive() {
+  var archiveName = `${dirname}.zip`;
+  var output = fs.createWriteStream(archiveName);
+  var archive = archiver('zip');
+
+  console.log(`Creating archive ${archiveName}`);
+  output.on('close', function () {
+    console.log(`Archive created (${archive.pointer()} bytes)`);
+  });
+
+  archive.on('error', function(err) {
+    throw err;
+  });
+
+  archive.pipe(output);
+
+  // append files from a sub-directory, putting its contents at the root of archive
+  archive.directory(output_dir, false);
+
+  archive.finalize();
+
+  console.log(`Removing directory ${output_dir}`)
+  fs.rmdirSync(output_dir, { recursive: true });
+}
