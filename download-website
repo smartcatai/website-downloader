@@ -144,8 +144,8 @@ function zipArchive() {
   // append files from a sub-directory, putting its contents at the root of archive
   archive.directory(output_dir, false);
 
-  archive.finalize();
-
-  console.log(`Removing directory ${output_dir}`)
-  fs.rmdirSync(output_dir, { recursive: true });
+  archive.finalize().then(function(){
+    console.log(`Removing directory ${output_dir}`)
+    fs.rmdirSync(output_dir, { recursive: true });
+  });
 }
